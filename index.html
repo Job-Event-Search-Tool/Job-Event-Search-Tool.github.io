@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- This page is public on purpose and contains no data. It is a lock: until this
+     device is given a GitHub token, it shows nothing but a connect form. With the
+     token it loads the real dashboard (app.html) from the PRIVATE repo's `site`
+     branch through the GitHub API, so the events, your marks and your profile never
+     sit anywhere public. Published with scripts/publish_stub.sh. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Events</title>
+<style>
+[hidden]{display:none!important}
+:root{--bg:#fbfbfa;--card:#fff;--ink:#1a1d21;--dim:#6b7280;--line:#e5e7eb;--accent:#1462b5;--bad:#a13b2f}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1c1f24;--ink:#e8eaed;--dim:#9aa2ad;--line:#2c3138;--accent:#5fa8ff;--bad:#ef7b6b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+main{max-width:520px;margin:0 auto;padding:48px 18px}
+h1{font-size:21px;margin:0 0 6px;letter-spacing:-.01em}
+p{margin:0 0 14px;color:var(--dim);font-size:14px}
+.err{color:var(--bad);font-weight:600}
+form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:10px}
+label{display:block;font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:0 0 5px}
+input{width:100%;font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);margin:0 0 13px}
+button{appearance:none;border:0;background:var(--accent);color:#fff;font:inherit;font-weight:650;font-size:14px;padding:10px 16px;border-radius:8px;cursor:pointer}
+details{margin-top:14px;font-size:13px;color:var(--dim)}
+details li{margin-bottom:4px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Private dashboard</h1>
+  <p id="msg">Loading&hellip;</p>
+  <form id="connect" hidden autocomplete="off">
+    <label for="repo">Repository</label>
+    <input id="repo" name="repo" placeholder="owner/name" spellcheck="false" required>
+    <label for="token">Access token</label>
+    <input id="token" name="token" type="password" placeholder="github_pat_&hellip;" spellcheck="false" required>
+    <button type="submit">Connect this device</button>
+    <details>
+      <summary>Making a token</summary>
+      <ol>
+        <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub &rarr; Fine-grained tokens &rarr; Generate</a>.</li>
+        <li>Repository access: <b>Only select repositories</b> &rarr; the dashboard repo.</li>
+        <li>Permissions &rarr; Repository &rarr; <b>Contents: Read and write</b>. Nothing else.</li>
+        <li>Expiration: 90 days. The token stays on this device only.</li>
+      </ol>
+    </details>
+  </form>
+  <p id="forget" hidden><a href="#" id="forgetlink">Disconnect this device</a></p>
+</main>
+<script>
+(function () {
+  'use strict';
+  var K = {repo: 'jes.repo', token: 'jes.token', cache: 'jes.app.cache', at: 'jes.app.at'};
+  var API = 'https://api.github.com';
+  var TIMEOUT_MS = 9000;
+
+  function get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function put(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  function $(id) { return document.getElementById(id); }
+
+  // A device link carries the credentials in the fragment (#r=owner/repo&t=token).
+  // Fragments never reach a server; store them and strip them from the address bar
+  // and the history entry straight away.
+  function takeFragment() {
+    var h = location.hash.replace(/^#/, '');
+    if (!h) return;
+    var q = new URLSearchParams(h), r = q.get('r'), t = q.get('t');
+    if (r) put(K.repo, r.trim());
+    if (t) put(K.token, t.trim());
+    if (r || t) history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  function say(text, isErr) {
+    var m = $('msg');
+    m.textContent = text;
+    m.className = isErr ? 'err' : '';
+  }
+
+  function showConnect(why) {
+    say(why || 'This device is not connected yet.', !!why);
+    $('repo').value = get(K.repo);
+    $('connect').hidden = false;
+    $('forget').hidden = !get(K.token);
+  }
+
+  // Swap the stub for the dashboard. DOMParser + importNode rather than
+  // document.write: identical result, and it can be tested in jsdom. Scripts that
+  // arrive through a parsed document do not run, so each one is re-created.
+  function render(html, note) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    if (note) {
+      var b = doc.createElement('div');
+      b.setAttribute('role', 'status');
+      b.setAttribute('style', 'background:#8a5a00;color:#fff;font:600 13px/1.4 system-ui,sans-serif;' +
+                     'padding:8px 14px;text-align:center');
+      b.textContent = note;
+      doc.body.insertBefore(b, doc.body.firstChild);
+    }
+    var root = document.importNode(doc.documentElement, true);
+    document.replaceChild(root, document.documentElement);
+    [].slice.call(root.querySelectorAll('script')).forEach(function (old) {
+      var s = document.createElement('script');
+      [].slice.call(old.attributes).forEach(function (a) { s.setAttribute(a.name, a.value); });
+      s.text = old.text;
+      old.parentNode.replaceChild(s, old);
+    });
+  }
+
+  function fromCache(note) {
+    var html = get(K.cache);
+    if (!html) return false;
+    var at = parseInt(get(K.at), 10);
+    render(html, note + (at ? ' Showing the copy saved ' + new Date(at).toLocaleString() + '.' : ''));
+    return true;
+  }
+
+  function load() {
+    var repo = get(K.repo), token = get(K.token);
+    if (!repo || !token) return showConnect();
+    say('Loading…');
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, TIMEOUT_MS);
+    fetch(API + '/repos/' + repo + '/contents/app.html?ref=site', {
+      headers: {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github.raw',
+                'X-GitHub-Api-Version': '2022-11-28'},
+      cache: 'no-store', signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+      clearTimeout(timer);
+      if (r.status === 401) {
+        del(K.token);
+        return showConnect('GitHub rejected the token — it has probably expired. Paste a new one.');
+      }
+      if (r.status === 404) {
+        return showConnect('Nothing found in ' + repo + '. Check the repository name and that the ' +
+                           'token was given access to it.');
+      }
+      if (!r.ok) {
+        if (fromCache('GitHub answered ' + r.status + '.')) return;
+        return showConnect('GitHub answered ' + r.status + ' — try again in a minute.');
+      }
+      return r.text().then(function (html) {
+        // Keep the last good copy for offline use (BART tunnels). A full quota is
+        // not an error: the page still renders, it just will not work offline.
+        if (put(K.cache, html)) put(K.at, String(Date.now()));
+        render(html);
+      });
+    }).catch(function () {
+      clearTimeout(timer);
+      if (!fromCache('Offline — this is the last copy saved on this device.')) {
+        say('You appear to be offline, and nothing has been saved on this device yet.', true);
+      }
+    });
+  }
+
+  $('connect').addEventListener('submit', function (e) {
+    e.preventDefault();
+    put(K.repo, $('repo').value.trim());
+    put(K.token, $('token').value.trim());
+    $('token').value = '';
+    $('connect').hidden = true;
+    load();
+  });
+  $('forgetlink').addEventListener('click', function (e) {
+    e.preventDefault();
+    [K.token, K.cache, K.at].forEach(del);
+    showConnect('Disconnected. Nothing from the dashboard is left on this device.');
+  });
+
+  takeFragment();
+  load();
+})();
+</script>
+</body>
+</html>
