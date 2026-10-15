@@ -71,7 +71,7 @@ a{color:var(--accent)}
     var h = location.hash.replace(/^#/, '');
     if (!h) return;
     var q = new URLSearchParams(h), r = q.get('r'), t = q.get('t');
-    if (r) put(K.repo, r.trim());
+    if (r) put(K.repo, cleanRepo(r));
     if (t) put(K.token, t.trim());
     if (r || t) history.replaceState(null, '', location.pathname + location.search);
   }
@@ -112,6 +112,36 @@ a{color:var(--accent)}
     });
   }
 
+  // People paste "https://github.com/owner/repo", "owner/repo/", or add spaces.
+  function cleanRepo(s) {
+    s = String(s || '').trim().replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+          .replace(/\.git$/i, '').replace(/\/+$/, '');
+    var parts = s.split('/').filter(Boolean);
+    return parts.length >= 2 ? parts[0] + '/' + parts[1] : s;
+  }
+
+  // GitHub says 404 both for "no such repo" and "your token may not see it".
+  // Ask two more questions so the message names the actual problem.
+  function explain404(repo, token) {
+    var h = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'};
+    fetch(API + '/repos/' + repo, {headers: h, cache: 'no-store'}).then(function (r) {
+      if (r.ok) {
+        return showConnect('The token can see ' + repo + ', but the dashboard file is missing. ' +
+                           'Wait for the next daily build, or ask for it to be rebuilt.');
+      }
+      return fetch(API + '/user', {headers: h, cache: 'no-store'}).then(function (u) {
+        return u.ok ? u.json() : {};
+      }).then(function (me) {
+        var who = me && me.login ? ' (it belongs to ' + me.login + ')' : '';
+        showConnect('Your token works' + who + ', but it is not allowed to see ' + repo + '. ' +
+          'Make a new token: set Resource owner to your own account, choose "Only select ' +
+          'repositories" and pick ' + repo.split('/')[1] + ', and give Contents: Read and write.');
+      });
+    }).catch(function () {
+      showConnect('Nothing found in ' + repo + '. Check the repository name and the token.');
+    });
+  }
+
   function fromCache(note) {
     var html = get(K.cache);
     if (!html) return false;
@@ -136,10 +166,7 @@ a{color:var(--accent)}
         del(K.token);
         return showConnect('GitHub rejected the token — it has probably expired. Paste a new one.');
       }
-      if (r.status === 404) {
-        return showConnect('Nothing found in ' + repo + '. Check the repository name and that the ' +
-                           'token was given access to it.');
-      }
+      if (r.status === 404) return explain404(repo, token);
       if (!r.ok) {
         if (fromCache('GitHub answered ' + r.status + '.')) return;
         return showConnect('GitHub answered ' + r.status + ' — try again in a minute.');
@@ -160,7 +187,7 @@ a{color:var(--accent)}
 
   $('connect').addEventListener('submit', function (e) {
     e.preventDefault();
-    put(K.repo, $('repo').value.trim());
+    put(K.repo, cleanRepo($('repo').value));
     put(K.token, $('token').value.trim());
     $('token').value = '';
     $('connect').hidden = true;
